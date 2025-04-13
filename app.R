@@ -268,19 +268,10 @@ server <- function(input, output, session) {
     )
   )
   
-  # Load data when file is uploaded
-  observeEvent(input$file, {
-    req(input$file)
-    values$data <- read.csv(input$file$datapath, 
-                            header = input$header,
-                            sep = input$sep,
-                            na.strings = c("", "NA"))
-  })
-  
   # Sample data for demonstration
   observeEvent(input$use_sample, {
-    values$data <- read.csv("Phishing_Legitimate.csv", na.strings = c("", "NA"))
-    # If the sample file doesn't work, create mock data
+    values$data <- read.csv("https://raw.githubusercontent.com/datasets-io/phishing-websites/master/data.csv")
+    # If the sample URL doesn't work, you can create mock data
     if (is.null(values$data) || nrow(values$data) == 0) {
       set.seed(123)
       n <- 1000
@@ -304,6 +295,15 @@ server <- function(input, output, session) {
     }
   })
   
+  # Load data when file is uploaded
+  observeEvent(input$file, {
+    req(input$file)
+    values$data <- read.csv(input$file$datapath, 
+                            header = input$header,
+                            sep = input$sep,
+                            na.strings = c("", "NA"))
+  })
+  
   # Data Preview
   output$data_preview <- DT::renderDataTable({
     req(values$data)
@@ -325,19 +325,9 @@ server <- function(input, output, session) {
   # Missing Values Plot
   output$missing_plot <- renderPlot({
     req(values$data)
-    
-    # Calculate missing values
-    missing_values <- colSums(is.na(values$data))
-    missing_percentage <- (missing_values / nrow(values$data)) * 100
-    
-    if(sum(missing_values) > 0) {
-      # Create a barplot of missing values percentages
-      barplot(missing_percentage, 
-              main = "Missing Values by Column", 
-              xlab = "Column", 
-              ylab = "Percentage Missing",
-              las = 2,
-              col = "steelblue")
+    if(sum(is.na(values$data)) > 0) {
+      missmap(values$data, main = "Missing Values Map", 
+              col = c("red", "steelblue"), legend = TRUE)
     } else {
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
       text(1, 1, "No missing values found", cex = 1.5)
@@ -389,10 +379,6 @@ server <- function(input, output, session) {
     } else if(input$missing_method == "mice") {
       if(any(missing_percentage > 0)) {
         withProgress(message = 'Imputing missing values...', {
-          # Make sure mice package is loaded
-          if (!require("mice")) install.packages("mice")
-          library(mice)
-          
           imp <- mice(data, method = "pmm", m = 1, maxit = 5, printFlag = FALSE)
           data <- complete(imp)
         })
@@ -510,10 +496,6 @@ server <- function(input, output, session) {
     req(values$data_clean)
     
     if("CLASS_LABEL" %in% names(values$data_clean)) {
-      # Ensure ggplot2 is loaded
-      if (!require("ggplot2")) install.packages("ggplot2")
-      library(ggplot2)
-      
       ggplot(values$data_clean, aes(x = as.factor(CLASS_LABEL))) + 
         geom_bar(fill = "blue") + 
         labs(title = "Distribution of Phishing vs Legitimate Websites",
@@ -531,10 +513,6 @@ server <- function(input, output, session) {
     req(values$data_clean)
     
     if("UrlLength" %in% names(values$data_clean)) {
-      # Ensure ggplot2 is loaded
-      if (!require("ggplot2")) install.packages("ggplot2")
-      library(ggplot2)
-      
       ggplot(values$data_clean, aes(x = UrlLength)) + 
         geom_histogram(fill = "red", bins = 30, alpha = 0.7) + 
         labs(title = "Distribution of URL Length", x = "URL Length", y = "Frequency") +
@@ -550,10 +528,6 @@ server <- function(input, output, session) {
     req(values$data_clean)
     
     if(all(c("UrlLength", "CLASS_LABEL") %in% names(values$data_clean))) {
-      # Ensure ggplot2 is loaded
-      if (!require("ggplot2")) install.packages("ggplot2")
-      library(ggplot2)
-      
       ggplot(values$data_clean, aes(x = as.factor(CLASS_LABEL), y = UrlLength)) + 
         geom_boxplot(fill = "orange") + 
         labs(title = "Boxplot of URL Length by Class",
@@ -570,10 +544,6 @@ server <- function(input, output, session) {
     req(values$data_clean)
     
     if(all(c("UrlLength", "CLASS_LABEL") %in% names(values$data_clean))) {
-      # Ensure ggplot2 is loaded
-      if (!require("ggplot2")) install.packages("ggplot2")
-      library(ggplot2)
-      
       ggplot(values$data_clean, aes(x = UrlLength, fill = as.factor(CLASS_LABEL))) + 
         geom_density(alpha = 0.6) + 
         labs(title = "Density Plot of URL Length", 
@@ -590,24 +560,18 @@ server <- function(input, output, session) {
   output$correlation_plot <- renderPlot({
     req(values$data_clean)
     
-    # Ensure corrplot is loaded
-    if (!require("corrplot")) install.packages("corrplot")
-    library(corrplot)
-    
     # Select only numeric columns for correlation
     numeric_data <- values$data_clean[, sapply(values$data_clean, is.numeric)]
     
     if(ncol(numeric_data) >= 2) {
       cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
       
-      # Apply correlation cutoff if specified
-      if (!is.null(input$corr_cutoff)) {
-        cor_matrix[abs(cor_matrix) < input$corr_cutoff] <- 0
-      }
+      # Apply correlation cutoff
+      cor_matrix[abs(cor_matrix) < input$corr_cutoff] <- 0
       
       corrplot(cor_matrix, method = "color", type = "upper", 
                tl.cex = 0.7, tl.col = "black", diag = FALSE,
-               title = paste("Correlation Matrix"))
+               title = paste("Correlation Matrix (Cutoff:", input$corr_cutoff, ")"))
     } else {
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
       text(1, 1, "Insufficient numeric columns for correlation", cex = 1.5)
@@ -629,13 +593,7 @@ server <- function(input, output, session) {
     
     # Split data
     set.seed(input$random_seed)
-    # Using 80% for training as in the first file
-    train_size <- 0.8
-    if (!is.null(input$train_test_split)) {
-      train_size <- input$train_test_split/100
-    }
-    
-    train_index <- sample(1:nrow(data), train_size * nrow(data))
+    train_index <- sample(1:nrow(data), input$train_test_split/100 * nrow(data))
     values$train_data <- data[train_index, ]
     values$test_data <- data[-train_index, ]
     
@@ -649,7 +607,7 @@ server <- function(input, output, session) {
     req(values$train_data, values$test_data)
     
     withProgress(message = 'Training Logistic Regression...', {
-      # Train model using the same approach as in the first file
+      # Train model
       logistic_model <- glm(CLASS_LABEL ~ ., data = values$train_data, family = "binomial")
       values$logistic_model <- logistic_model
       
@@ -662,33 +620,17 @@ server <- function(input, output, session) {
       accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
       
       # Get other metrics
-      # Make sure pROC is loaded
-      if (!require("pROC")) install.packages("pROC")
-      library(pROC)
-      
       if(length(unique(values$test_data$CLASS_LABEL)) == 2) {
         # For binary classification
         roc_obj <- roc(values$test_data$CLASS_LABEL, pred_prob)
         auc_value <- auc(roc_obj)
         
-        # Use caret for additional metrics
-        if (!require("caret")) install.packages("caret")
-        library(caret)
-        
-        # Convert to factors for caret metrics
-        pred_class_factor <- factor(pred_class, levels = levels(values$test_data$CLASS_LABEL))
-        
-        # Calculate sensitivity and specificity
-        cm <- confusionMatrix(pred_class_factor, values$test_data$CLASS_LABEL)
-        sensitivity_val <- cm$byClass["Sensitivity"]
-        specificity_val <- cm$byClass["Specificity"]
-        
         # Add to metrics table
         new_metrics <- data.frame(
           Model = "Logistic Regression",
           Accuracy = accuracy,
-          Sensitivity = sensitivity_val,
-          Specificity = specificity_val,
+          Sensitivity = sensitivity(as.factor(pred_class), as.factor(values$test_data$CLASS_LABEL), positive = "1"),
+          Specificity = specificity(as.factor(pred_class), as.factor(values$test_data$CLASS_LABEL), positive = "1"),
           AUC = auc_value,
           stringsAsFactors = FALSE
         )
@@ -723,10 +665,6 @@ server <- function(input, output, session) {
   observeEvent(input$train_knn, {
     req(values$train_data, values$test_data)
     
-    # Make sure class package is loaded
-    if (!require("class")) install.packages("class")
-    library(class)
-    
     withProgress(message = 'Training KNN...', {
       # Prepare data
       train_x <- values$train_data[, !names(values$train_data) %in% "CLASS_LABEL"]
@@ -735,43 +673,25 @@ server <- function(input, output, session) {
       test_y <- values$test_data$CLASS_LABEL
       
       # Train model and predict
-      k_value <- 5
-      if (!is.null(input$knn_k)) {
-        k_value <- input$knn_k
-      }
-      
-      knn_pred <- knn(train = train_x, test = test_x, cl = train_y, k = k_value)
-      values$knn_model <- list(k = k_value, train_x = train_x, train_y = train_y)
+      knn_pred <- knn(train = train_x, test = test_x, cl = train_y, k = input$knn_k)
+      values$knn_model <- list(k = input$knn_k, train_x = train_x, train_y = train_y)
       
       # Evaluate
       conf_matrix <- table(Predicted = knn_pred, Actual = test_y)
       accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
       
-      # Use caret for additional metrics
-      if (!require("caret")) install.packages("caret")
-      library(caret)
-      
-      # Calculate sensitivity and specificity
-      cm <- confusionMatrix(knn_pred, test_y)
-      sensitivity_val <- cm$byClass["Sensitivity"]
-      specificity_val <- cm$byClass["Specificity"]
-      
       # Add to metrics table
       new_metrics <- data.frame(
         Model = "KNN",
         Accuracy = accuracy,
-        Sensitivity = sensitivity_val,
-        Specificity = specificity_val,
+        Sensitivity = sensitivity(knn_pred, test_y, positive = "1"),
+        Specificity = specificity(knn_pred, test_y, positive = "1"),
         AUC = NA,  # KNN doesn't directly provide probability estimates for standard ROC curve
         stringsAsFactors = FALSE
       )
       
       # Update metrics table
       values$metrics <- rbind(values$metrics[values$metrics$Model != "KNN", ], new_metrics)
-      
-      # Ensure ggplot2 is loaded
-      if (!require("ggplot2")) install.packages("ggplot2")
-      library(ggplot2)
       
       # Plot a visualization (class distribution by features)
       output$knn_plot <- renderPlot({
@@ -786,7 +706,7 @@ server <- function(input, output, session) {
           
           ggplot(plot_data) +
             geom_point(aes(x = x, y = y, color = predicted, shape = actual), size = 3) +
-            labs(title = paste("KNN Classification (k =", k_value, ")"),
+            labs(title = paste("KNN Classification (k =", input$knn_k, ")"),
                  x = names(test_x)[1], y = names(test_x)[2],
                  color = "Predicted", shape = "Actual") +
             theme_minimal()
@@ -799,12 +719,12 @@ server <- function(input, output, session) {
       # Display summary
       output$knn_summary <- renderPrint({
         cat("K-Nearest Neighbors Results:\n\n")
-        cat("k value:", k_value, "\n\n")
+        cat("k value:", input$knn_k, "\n\n")
         cat("Confusion Matrix:\n")
         print(conf_matrix)
         cat("\nAccuracy:", round(accuracy, 4), "\n")
-        cat("Sensitivity:", round(sensitivity_val, 4), "\n")
-        cat("Specificity:", round(specificity_val, 4), "\n")
+        cat("Sensitivity:", round(new_metrics$Sensitivity, 4), "\n")
+        cat("Specificity:", round(new_metrics$Specificity, 4), "\n")
       })
     })
   })
@@ -812,10 +732,6 @@ server <- function(input, output, session) {
   # Train Naive Bayes
   observeEvent(input$train_nb, {
     req(values$train_data, values$test_data)
-    
-    # Make sure e1071 package is loaded
-    if (!require("e1071")) install.packages("e1071")
-    library(e1071)
     
     withProgress(message = 'Training Naive Bayes...', {
       # Train model
@@ -830,30 +746,17 @@ server <- function(input, output, session) {
       conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
       accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
       
-      # Make sure pROC is loaded
-      if (!require("pROC")) install.packages("pROC")
-      library(pROC)
-      
       # Calculate ROC and AUC
       if(ncol(pred_prob) == 2) {
         roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2])
         auc_value <- auc(roc_obj)
         
-        # Use caret for additional metrics
-        if (!require("caret")) install.packages("caret")
-        library(caret)
-        
-        # Calculate sensitivity and specificity
-        cm <- confusionMatrix(pred_class, values$test_data$CLASS_LABEL)
-        sensitivity_val <- cm$byClass["Sensitivity"]
-        specificity_val <- cm$byClass["Specificity"]
-        
         # Add to metrics table
         new_metrics <- data.frame(
           Model = "Naive Bayes",
           Accuracy = accuracy,
-          Sensitivity = sensitivity_val,
-          Specificity = specificity_val,
+          Sensitivity = sensitivity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
+          Specificity = specificity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
           AUC = auc_value,
           stringsAsFactors = FALSE
         )
@@ -889,22 +792,10 @@ server <- function(input, output, session) {
   observeEvent(input$train_dt, {
     req(values$train_data, values$test_data)
     
-    # Make sure rpart and rpart.plot are loaded
-    if (!require("rpart")) install.packages("rpart")
-    if (!require("rpart.plot")) install.packages("rpart.plot")
-    library(rpart)
-    library(rpart.plot)
-    
     withProgress(message = 'Training Decision Tree...', {
-      # Default max depth
-      max_depth <- 6
-      if (!is.null(input$dt_depth)) {
-        max_depth <- input$dt_depth
-      }
-      
       # Train model
       dt_model <- rpart(CLASS_LABEL ~ ., data = values$train_data, 
-                        method = "class", control = rpart.control(maxdepth = max_depth))
+                        method = "class", control = rpart.control(maxdepth = input$dt_depth))
       values$dt_model <- dt_model
       
       # Predict
@@ -915,30 +806,17 @@ server <- function(input, output, session) {
       conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
       accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
       
-      # Make sure pROC is loaded
-      if (!require("pROC")) install.packages("pROC")
-      library(pROC)
-      
       # Calculate ROC and AUC
       if(ncol(pred_prob) == 2) {
         roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2])
         auc_value <- auc(roc_obj)
         
-        # Use caret for additional metrics
-        if (!require("caret")) install.packages("caret")
-        library(caret)
-        
-        # Calculate sensitivity and specificity
-        cm <- confusionMatrix(pred_class, values$test_data$CLASS_LABEL)
-        sensitivity_val <- cm$byClass["Sensitivity"]
-        specificity_val <- cm$byClass["Specificity"]
-        
         # Add to metrics table
         new_metrics <- data.frame(
           Model = "Decision Tree",
           Accuracy = accuracy,
-          Sensitivity = sensitivity_val,
-          Specificity = specificity_val,
+          Sensitivity = sensitivity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
+          Specificity = specificity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
           AUC = auc_value,
           stringsAsFactors = FALSE
         )
@@ -960,23 +838,9 @@ server <- function(input, output, session) {
         print(conf_matrix)
         cat("\nAccuracy:", round(accuracy, 4), "\n")
         if(exists("auc_value")) cat("AUC:", round(auc_value, 4), "\n")
-        cat("Sensitivity:", round(sensitivity_val, 4), "\n")
-        cat("Specificity:", round(specificity_val, 4), "\n")
-        # Variable importance plot
-        output$dt_var_imp <- renderPlot({
-          # Plot variable importance
-          imp <- dt_model$variable.importance
-          if(length(imp) > 0) {
-            # Sort variable importance in descending order
-            imp_sorted <- sort(imp, decreasing = TRUE)
-            # Plot as a bar chart
-            barplot(imp_sorted, main = "Variable Importance - Decision Tree",
-                    col = "skyblue", horiz = TRUE, las = 1)
-          } else {
-            plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-            text(1, 1, "No variable importance available", cex = 1.5)
-          }
-        })
+        
+        cat("\nVariable Importance:\n")
+        print(dt_model$variable.importance)
       })
     })
   })
@@ -985,21 +849,10 @@ server <- function(input, output, session) {
   observeEvent(input$train_rf, {
     req(values$train_data, values$test_data)
     
-    # Make sure randomForest package is loaded
-    if (!require("randomForest")) install.packages("randomForest")
-    library(randomForest)
-    
     withProgress(message = 'Training Random Forest...', {
-      # Default number of trees
-      n_trees <- 100
-      if (!is.null(input$rf_trees)) {
-        n_trees <- input$rf_trees
-      }
-      
       # Train model
-      set.seed(input$random_seed)
       rf_model <- randomForest(CLASS_LABEL ~ ., data = values$train_data, 
-                               ntree = n_trees, importance = TRUE)
+                               ntree = input$rf_trees, importance = TRUE)
       values$rf_model <- rf_model
       
       # Predict
@@ -1010,92 +863,46 @@ server <- function(input, output, session) {
       conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
       accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
       
-      # Make sure pROC is loaded
-      if (!require("pROC")) install.packages("pROC")
-      library(pROC)
-      
       # Calculate ROC and AUC
       if(ncol(pred_prob) == 2) {
         roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2])
         auc_value <- auc(roc_obj)
         
-        # Use caret for additional metrics
-        if (!require("caret")) install.packages("caret")
-        library(caret)
-        
-        # Calculate sensitivity and specificity
-        cm <- confusionMatrix(pred_class, values$test_data$CLASS_LABEL)
-        sensitivity_val <- cm$byClass["Sensitivity"]
-        specificity_val <- cm$byClass["Specificity"]
-        
         # Add to metrics table
         new_metrics <- data.frame(
           Model = "Random Forest",
           Accuracy = accuracy,
-          Sensitivity = sensitivity_val,
-          Specificity = specificity_val,
+          Sensitivity = sensitivity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
+          Specificity = specificity(pred_class, values$test_data$CLASS_LABEL, positive = "1"),
           AUC = auc_value,
           stringsAsFactors = FALSE
         )
         
         # Update metrics table
         values$metrics <- rbind(values$metrics[values$metrics$Model != "Random Forest", ], new_metrics)
-        
-        # Plot ROC curve
-        output$rf_roc <- renderPlot({
-          plot(roc_obj, main = "ROC Curve - Random Forest", 
-               col = "purple", lwd = 2)
-          abline(a = 0, b = 1, lty = 2, col = "gray")
-          legend("bottomright", legend = paste("AUC =", round(auc_value, 3)), 
-                 col = "purple", lwd = 2)
-        })
       }
       
-      # Variable importance plot
-      output$rf_var_imp <- renderPlot({
-        # Plot variable importance
-        if (!is.null(rf_model$importance)) {
-          # Ensure ggplot2 is loaded
-          if (!require("ggplot2")) install.packages("ggplot2")
-          library(ggplot2)
-          
-          # Get mean decrease in accuracy
-          imp_df <- as.data.frame(importance(rf_model))
-          imp_df$Variable <- rownames(imp_df)
-          
-          # Sort by mean decrease in accuracy
-          imp_df <- imp_df[order(imp_df$MeanDecreaseAccuracy, decreasing = TRUE), ]
-          
-          # Plot top 15 most important variables
-          imp_df <- head(imp_df, 15)
-          
-          ggplot(imp_df, aes(x = reorder(Variable, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
-            geom_bar(stat = "identity", fill = "darkgreen") +
-            coord_flip() +
-            labs(title = "Variable Importance - Random Forest",
-                 x = "", y = "Mean Decrease in Accuracy") +
-            theme_minimal()
-        } else {
-          plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-          text(1, 1, "No variable importance available", cex = 1.5)
-        }
-      })
-      
-      # Plot error rate
-      output$rf_error_plot <- renderPlot({
-        plot(rf_model, main = "Random Forest Error Rate vs Number of Trees")
+      # Plot feature importance
+      output$rf_importance <- renderPlot({
+        importance_df <- as.data.frame(importance(rf_model))
+        importance_df$Features <- rownames(importance_df)
+        
+        ggplot(importance_df, aes(x = reorder(Features, MeanDecreaseGini), y = MeanDecreaseGini)) +
+          geom_bar(stat = "identity", fill = "#4daf4a") +
+          coord_flip() +
+          labs(title = "Random Forest - Feature Importance",
+               x = "Features",
+               y = "Mean Decrease in Gini Index") +
+          theme_minimal()
       })
       
       # Display summary
       output$rf_summary <- renderPrint({
         cat("Random Forest Results:\n\n")
-        cat("Number of trees:", n_trees, "\n\n")
         cat("Confusion Matrix:\n")
         print(conf_matrix)
         cat("\nAccuracy:", round(accuracy, 4), "\n")
         if(exists("auc_value")) cat("AUC:", round(auc_value, 4), "\n")
-        cat("Sensitivity:", round(sensitivity_val, 4), "\n")
-        cat("Specificity:", round(specificity_val, 4), "\n")
         
         cat("\nModel Details:\n")
         print(rf_model)
@@ -1103,559 +910,154 @@ server <- function(input, output, session) {
     })
   })
   
-  # Metrics Comparison Plot
-  output$metrics_comparison <- renderPlot({
-    req(values$metrics)
-    if(nrow(values$metrics) == 0) {
-      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
-      text(1, 1, "No model metrics available. Train models first.", cex = 1.5)
-      return()
-    }
+  # Model Comparison - Accuracy Plot
+  output$accuracy_plot <- renderPlot({
+    req(nrow(values$metrics) > 0)
     
-    # Ensure ggplot2 is loaded
-    if (!require("ggplot2")) install.packages("ggplot2")
-    library(ggplot2)
-    
-    # Reshape data for plotting
-    metrics_long <- reshape2::melt(values$metrics, id.vars = "Model")
-    
-    # Plot metrics
-    ggplot(metrics_long, aes(x = Model, y = value, fill = variable)) +
-      geom_bar(stat = "identity", position = "dodge") +
-      labs(title = "Model Performance Comparison",
-           x = "Model", y = "Value", fill = "Metric") +
+    ggplot(values$metrics, aes(x = reorder(Model, Accuracy), y = Accuracy, fill = Model)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = paste0(round(Accuracy * 100, 1), "%")), 
+                vjust = -0.3, size = 5) +
+      labs(title = "Model Accuracy Comparison", x = "Model", y = "Accuracy") +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-      ylim(0, 1)
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
   
-  # Metrics Comparison Table
-  output$metrics_table <- DT::renderDataTable({
-    req(values$metrics)
-    DT::datatable(values$metrics, 
-                  options = list(pageLength = 10, searching = FALSE),
-                  rownames = FALSE) %>%
-      DT::formatRound(columns = c("Accuracy", "Sensitivity", "Specificity", "AUC"), digits = 4)
-  })
-  
-  # Make predictions on new data
-  observeEvent(input$predict_btn, {
-    req(input$predict_input)
-    
-    # Try to parse the input JSON
-    tryCatch({
-      new_data <- jsonlite::fromJSON(input$predict_input)
-      
-      # Convert to data frame if it's a list
-      if(is.list(new_data) && !is.data.frame(new_data)) {
-        new_data <- as.data.frame(new_data)
-      }
-      
-      # Check available models
-      available_models <- c()
-      if(!is.null(values$logistic_model)) available_models <- c(available_models, "Logistic Regression")
-      if(!is.null(values$knn_model)) available_models <- c(available_models, "KNN")
-      if(!is.null(values$nb_model)) available_models <- c(available_models, "Naive Bayes")
-      if(!is.null(values$dt_model)) available_models <- c(available_models, "Decision Tree")
-      if(!is.null(values$rf_model)) available_models <- c(available_models, "Random Forest")
-      
-      if(length(available_models) == 0) {
-        output$predict_result <- renderText("No models available. Please train models first.")
-        return()
-      }
-      
-      # Make predictions with all available models
-      results <- data.frame(Model = character(), Prediction = character(), stringsAsFactors = FALSE)
-      
-      # Logistic Regression
-      if(!is.null(values$logistic_model)) {
-        pred_prob <- predict(values$logistic_model, new_data, type = "response")
-        pred_class <- ifelse(pred_prob > 0.5, "Phishing (1)", "Legitimate (0)")
-        results <- rbind(results, data.frame(Model = "Logistic Regression", 
-                                             Prediction = pred_class,
-                                             Probability = round(pred_prob, 4),
-                                             stringsAsFactors = FALSE))
-      }
-      
-      # KNN
-      if(!is.null(values$knn_model)) {
-        # Make sure class columns match
-        common_cols <- intersect(names(new_data), names(values$knn_model$train_x))
-        if(length(common_cols) > 0) {
-          knn_pred <- knn(train = values$knn_model$train_x[, common_cols], 
-                          test = new_data[, common_cols], 
-                          cl = values$knn_model$train_y, 
-                          k = values$knn_model$k)
-          pred_class <- ifelse(knn_pred == 1, "Phishing (1)", "Legitimate (0)")
-          results <- rbind(results, data.frame(Model = "KNN", 
-                                               Prediction = pred_class,
-                                               Probability = NA,
-                                               stringsAsFactors = FALSE))
-        } else {
-          results <- rbind(results, data.frame(Model = "KNN", 
-                                               Prediction = "Feature mismatch error",
-                                               Probability = NA,
-                                               stringsAsFactors = FALSE))
-        }
-      }
-      
-      # Naive Bayes
-      if(!is.null(values$nb_model)) {
-        tryCatch({
-          pred_class <- predict(values$nb_model, new_data)
-          pred_prob <- predict(values$nb_model, new_data, type = "raw")
-          pred_class_label <- ifelse(pred_class == 1, "Phishing (1)", "Legitimate (0)")
-          results <- rbind(results, data.frame(Model = "Naive Bayes", 
-                                               Prediction = pred_class_label,
-                                               Probability = round(pred_prob[, 2], 4),
-                                               stringsAsFactors = FALSE))
-        }, error = function(e) {
-          results <- rbind(results, data.frame(Model = "Naive Bayes", 
-                                               Prediction = paste("Error:", e$message),
-                                               Probability = NA,
-                                               stringsAsFactors = FALSE))
-        })
-      }
-      
-      # Decision Tree
-      if(!is.null(values$dt_model)) {
-        tryCatch({
-          pred_class <- predict(values$dt_model, new_data, type = "class")
-          pred_prob <- predict(values$dt_model, new_data, type = "prob")
-          pred_class_label <- ifelse(pred_class == 1, "Phishing (1)", "Legitimate (0)")
-          results <- rbind(results, data.frame(Model = "Decision Tree", 
-                                               Prediction = pred_class_label,
-                                               Probability = round(pred_prob[, 2], 4),
-                                               stringsAsFactors = FALSE))
-        }, error = function(e) {
-          results <- rbind(results, data.frame(Model = "Decision Tree", 
-                                               Prediction = paste("Error:", e$message),
-                                               Probability = NA,
-                                               stringsAsFactors = FALSE))
-        })
-      }
-      
-      # Random Forest
-      if(!is.null(values$rf_model)) {
-        tryCatch({
-          pred_class <- predict(values$rf_model, new_data)
-          pred_prob <- predict(values$rf_model, new_data, type = "prob")
-          pred_class_label <- ifelse(pred_class == 1, "Phishing (1)", "Legitimate (0)")
-          results <- rbind(results, data.frame(Model = "Random Forest", 
-                                               Prediction = pred_class_label,
-                                               Probability = round(pred_prob[, 2], 4),
-                                               stringsAsFactors = FALSE))
-        }, error = function(e) {
-          results <- rbind(results, data.frame(Model = "Random Forest", 
-                                               Prediction = paste("Error:", e$message),
-                                               Probability = NA,
-                                               stringsAsFactors = FALSE))
-        })
-      }
-      
-      # Display results
-      output$predict_table <- DT::renderDataTable({
-        DT::datatable(results, options = list(pageLength = 10), rownames = FALSE)
-      })
-      
-      # Overall verdict based on majority vote
-      phishing_count <- sum(results$Prediction == "Phishing (1)", na.rm = TRUE)
-      legitimate_count <- sum(results$Prediction == "Legitimate (0)", na.rm = TRUE)
-      
-      verdict <- ifelse(phishing_count > legitimate_count, 
-                        "Majority verdict: Phishing Website", 
-                        "Majority verdict: Legitimate Website")
-      
-      if(phishing_count == legitimate_count) {
-        verdict <- "Verdict: Inconclusive (equal votes)"
-      }
-      
-      output$predict_result <- renderText({
-        paste0("Prediction Results:\n\n", verdict, "\n\nPhishing votes: ", 
-               phishing_count, ", Legitimate votes: ", legitimate_count)
-      })
-      
-    }, error = function(e) {
-      output$predict_result <- renderText(paste("Error in input data:", e$message,
-                                                "\n\nPlease provide a valid JSON format."))
-    })
-  })
-  
-  # Example Input Button
-  observeEvent(input$example_input, {
-    example_data <- data.frame(
-      UrlLength = 75,
-      NumDots = 3,
-      NumDash = 1,
-      NumUnderscore = 0,
-      NumPercent = 0,
-      NumAmpersand = 0,
-      NumSlash = 5,
-      HasHttps = 0,
-      HasIP = 0,
-      DomainLength = 12,
-      NumSubdomains = 2,
-      PathLength = 35,
-      QueryLength = 25,
-      NumParameters = 3
-    )
-    
-    # Convert to JSON
-    json_data <- jsonlite::toJSON(example_data, pretty = TRUE)
-    
-    # Update the textInput
-    updateTextAreaInput(session, "predict_input", value = json_data)
-  })
-  
-  # Download Model Report
-  output$download_report <- downloadHandler(
-    filename = function() {
-      paste("phishing-detection-report-", Sys.Date(), ".html", sep = "")
-    },
-    content = function(file) {
-      # Make sure rmarkdown is installed
-      if (!require("rmarkdown")) install.packages("rmarkdown")
-      
-      # Create a temporary Rmd file
-      temp_report <- file.path(tempdir(), "report.Rmd")
-      
-      # Add models to the report environment
-      report_env <- new.env()
-      report_env$metrics <- values$metrics
-      report_env$logistic_model <- values$logistic_model
-      report_env$knn_model <- values$knn_model
-      report_env$nb_model <- values$nb_model
-      report_env$dt_model <- values$dt_model
-      report_env$rf_model <- values$rf_model
-      report_env$test_data <- values$test_data
-      
-      # Write the Rmd content
-      cat("---
-title: \"Phishing Website Detection Report\"
-date: \"`r Sys.Date()`\"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-library(ggplot2)
-library(knitr)
-library(dplyr)
-```
-
-## Model Performance Summary
-
-```{r}
-kable(metrics, caption = \"Model Performance Metrics\")
-```
-
-```{r, fig.width=10, fig.height=6}
-# Plot metrics comparison
-if(nrow(metrics) > 0) {
-  metrics_long <- reshape2::melt(metrics, id.vars = \"Model\")
-  
-  ggplot(metrics_long, aes(x = Model, y = value, fill = variable)) +
-    geom_bar(stat = \"identity\", position = \"dodge\") +
-    labs(title = \"Model Performance Comparison\",
-         x = \"Model\", y = \"Value\", fill = \"Metric\") +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    ylim(0, 1)
-}
-```
-
-## Model Details
-
-", file = temp_report)
-      
-      # Add Logistic Regression details if available
-      if(!is.null(values$logistic_model)) {
-        cat("
-### Logistic Regression
-
-```{r}
-if(!is.null(logistic_model)) {
-  # Summary
-  cat(\"Model Summary:\\n\")
-  print(summary(logistic_model))
-  
-  # Make predictions on test data
-  pred_prob <- predict(logistic_model, test_data, type = \"response\")
-  pred_class <- ifelse(pred_prob > 0.5, 1, 0)
-  
-  # Confusion matrix
-  conf_matrix <- table(Predicted = pred_class, Actual = test_data$CLASS_LABEL)
-  cat(\"\\nConfusion Matrix:\\n\")
-  print(conf_matrix)
-  
-  # ROC curve
-  if(require(pROC)) {
-    roc_obj <- roc(test_data$CLASS_LABEL, pred_prob)
-    plot(roc_obj, main = \"ROC Curve - Logistic Regression\", 
-        col = \"blue\", lwd = 2)
-    abline(a = 0, b = 1, lty = 2, col = \"gray\")
-    legend(\"bottomright\", legend = paste(\"AUC =\", round(auc(roc_obj), 3)), 
-          col = \"blue\", lwd = 2)
-  }
-}
-```
-", file = temp_report, append = TRUE)
-      }
-
-# Add Decision Tree details if available
-if(!is.null(values$dt_model)) {
-  cat("
-### Decision Tree
-
-```{r, fig.width=10, fig.height=8}
-if(!is.null(dt_model) && require(rpart.plot)) {
-  # Plot tree
-  rpart.plot(dt_model, main = \"Decision Tree\", 
-             extra = 106, box.palette = \"RdBu\")
-  
-  # Variable importance
-  imp <- dt_model$variable.importance
-  if(length(imp) > 0) {
-    # Sort variable importance in descending order
-    imp_sorted <- sort(imp, decreasing = TRUE)
-    # Plot as a bar chart
-    barplot(imp_sorted, main = \"Variable Importance - Decision Tree\",
-            col = \"skyblue\", horiz = TRUE, las = 1)
-  }
-  
-  # Confusion matrix
-  pred_class <- predict(dt_model, test_data, type = \"class\")
-  conf_matrix <- table(Predicted = pred_class, Actual = test_data$CLASS_LABEL)
-  cat(\"\\nConfusion Matrix:\\n\")
-  print(conf_matrix)
-}
-```
-", file = temp_report, append = TRUE)
-}
-
-# Add Random Forest details if available
-if(!is.null(values$rf_model)) {
-  cat("
-### Random Forest
-
-```{r, fig.width=10, fig.height=6}
-if(!is.null(rf_model)) {
-  # Plot error rate
-  plot(rf_model, main = \"Random Forest Error Rate vs Number of Trees\")
-  
-  # Variable importance
-  if(!is.null(rf_model$importance)) {
-    # Get mean decrease in accuracy
-    imp_df <- as.data.frame(importance(rf_model))
-    imp_df$Variable <- rownames(imp_df)
-    
-    # Sort by mean decrease in accuracy
-    imp_df <- imp_df[order(imp_df$MeanDecreaseAccuracy, decreasing = TRUE), ]
-    
-    # Plot top 15 most important variables
-    imp_df <- head(imp_df, 15)
-    
-    ggplot(imp_df, aes(x = reorder(Variable, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
-      geom_bar(stat = \"identity\", fill = \"darkgreen\") +
-      coord_flip() +
-      labs(title = \"Variable Importance - Random Forest\",
-           x = \"\", y = \"Mean Decrease in Accuracy\") +
-      theme_minimal()
-  }
-  
-  # Confusion matrix
-  pred_class <- predict(rf_model, test_data)
-  conf_matrix <- table(Predicted = pred_class, Actual = test_data$CLASS_LABEL)
-  cat(\"\\nConfusion Matrix:\\n\")
-  print(conf_matrix)
-}
-```
-", file = temp_report, append = TRUE)
-}
-
-# Render the report
-rmarkdown::render(temp_report, output_file = file, 
-                  envir = report_env, 
-                  quiet = TRUE)
-    }
-  )
-  
-  # Feature Recommendations
-  output$feature_recommendations <- renderPrint({
-    req(values$metrics)
-    
-    if(nrow(values$metrics) == 0) {
-      cat("Train models first to get feature recommendations.")
-      return()
-    }
-    
-    cat("Feature Importance Analysis:\n\n")
-    
-    # Check if Random Forest model is available (best for feature importance)
-    if(!is.null(values$rf_model)) {
-      cat("Based on Random Forest Variable Importance:\n")
-      
-      # Get importance measures
-      imp <- importance(values$rf_model)
-      imp_df <- data.frame(
-        Feature = rownames(imp),
-        Importance = imp[, "MeanDecreaseAccuracy"],
-        stringsAsFactors = FALSE
-      )
-      
-      # Sort by importance
-      imp_df <- imp_df[order(imp_df$Importance, decreasing = TRUE), ]
-      
-      # Display top features
-      cat("\nTop 5 Most Important Features:\n")
-      for(i in 1:min(5, nrow(imp_df))) {
-        cat(paste0(i, ". ", imp_df$Feature[i], " (Importance: ", 
-                   round(imp_df$Importance[i], 4), ")\n"))
-      }
-      
-      # Recommendations based on importance
-      cat("\nRecommendations:\n")
-      cat("- Focus on these top features for phishing detection\n")
-      cat("- Consider creating interaction terms with these features\n")
-      
-      # Check best performing model
-      best_model <- values$metrics[which.max(values$metrics$Accuracy), ]
-      cat("\nBest Performing Model: ", best_model$Model, 
-          " (Accuracy: ", round(best_model$Accuracy, 4), ")\n", sep = "")
-      
-    } else if(!is.null(values$dt_model)) {
-      # If Random Forest not available, use Decision Tree
-      cat("Based on Decision Tree Variable Importance:\n")
-      
-      # Get importance measures
-      imp <- values$dt_model$variable.importance
-      imp_df <- data.frame(
-        Feature = names(imp),
-        Importance = imp,
-        stringsAsFactors = FALSE
-      )
-      
-      # Sort by importance
-      imp_df <- imp_df[order(imp_df$Importance, decreasing = TRUE), ]
-      
-      # Display top features
-      cat("\nTop 5 Most Important Features:\n")
-      for(i in 1:min(5, nrow(imp_df))) {
-        cat(paste0(i, ". ", imp_df$Feature[i], " (Importance: ", 
-                   round(imp_df$Importance[i], 4), ")\n"))
-      }
-      
-      # Recommendations based on importance
-      cat("\nRecommendations:\n")
-      cat("- Focus on these top features for phishing detection\n")
-      cat("- Consider feature engineering to enhance these attributes\n")
-    } else {
-      cat("Train Decision Tree or Random Forest models to get feature importance analysis.")
-    }
-  })
-  
-  # Model Ensemble
-  observeEvent(input$create_ensemble, {
+  # Model Comparison - ROC Curves
+  output$roc_comparison <- renderPlot({
     req(values$test_data)
     
-    # Check if at least 2 models are available
-    available_models <- c()
-    if(!is.null(values$logistic_model)) available_models <- c(available_models, "logistic")
-    if(!is.null(values$knn_model)) available_models <- c(available_models, "knn")
-    if(!is.null(values$nb_model)) available_models <- c(available_models, "nb")
-    if(!is.null(values$dt_model)) available_models <- c(available_models, "dt")
-    if(!is.null(values$rf_model)) available_models <- c(available_models, "rf")
+    # Create an empty plot
+    plot(x = c(0, 1), y = c(0, 1), type = "n", 
+         xlim = c(0, 1), ylim = c(0, 1),
+         xlab = "False Positive Rate", ylab = "True Positive Rate",
+         main = "ROC Curve Comparison")
+    abline(a = 0, b = 1, lty = 2, col = "gray")
     
-    if(length(available_models) < 2) {
-      output$ensemble_result <- renderText("At least 2 trained models are required for ensemble.")
+    # Add ROC curves for each model
+    colors <- c("blue", "green", "red", "purple", "orange")
+    legend_text <- c()
+    
+    # Check if models exist and add their ROC curves
+    i <- 1
+    
+    # Logistic Regression
+    if(!is.null(values$logistic_model)) {
+      pred_prob <- predict(values$logistic_model, values$test_data, type = "response")
+      roc_obj <- roc(values$test_data$CLASS_LABEL, pred_prob, plot = FALSE)
+      plot(roc_obj, add = TRUE, col = colors[i], lwd = 2)
+      legend_text <- c(legend_text, paste0("Logistic Regression (AUC = ", round(auc(roc_obj), 3), ")"))
+      i <- i + 1
+    }
+    
+    # Naive Bayes
+    if(!is.null(values$nb_model)) {
+      pred_prob <- predict(values$nb_model, values$test_data, type = "raw")
+      if(ncol(pred_prob) == 2) {
+        roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2], plot = FALSE)
+        plot(roc_obj, add = TRUE, col = colors[i], lwd = 2)
+        legend_text <- c(legend_text, paste0("Naive Bayes (AUC = ", round(auc(roc_obj), 3), ")"))
+        i <- i + 1
+      }
+    }
+    
+    # Decision Tree
+    if(!is.null(values$dt_model)) {
+      pred_prob <- predict(values$dt_model, values$test_data, type = "prob")
+      if(ncol(pred_prob) == 2) {
+        roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2], plot = FALSE)
+        plot(roc_obj, add = TRUE, col = colors[i], lwd = 2)
+        legend_text <- c(legend_text, paste0("Decision Tree (AUC = ", round(auc(roc_obj), 3), ")"))
+        i <- i + 1
+      }
+    }
+    
+    # Random Forest
+    if(!is.null(values$rf_model)) {
+      pred_prob <- predict(values$rf_model, values$test_data, type = "prob")
+      if(ncol(pred_prob) == 2) {
+        roc_obj <- roc(as.numeric(values$test_data$CLASS_LABEL) - 1, pred_prob[, 2], plot = FALSE)
+        plot(roc_obj, add = TRUE, col = colors[i], lwd = 2)
+        legend_text <- c(legend_text, paste0("Random Forest (AUC = ", round(auc(roc_obj), 3), ")"))
+        i <- i + 1
+      }
+    }
+    
+    # Add legend if any models were plotted
+    if(length(legend_text) > 0) {
+      legend("bottomright", legend = legend_text, col = colors[1:length(legend_text)], 
+             lwd = 2, cex = 0.8)
+    }
+  })
+  
+  # Metrics Table
+  output$metrics_table <- DT::renderDataTable({
+    req(values$metrics)
+    
+    # Format metrics for display
+    display_metrics <- values$metrics
+    display_metrics$Accuracy <- paste0(round(display_metrics$Accuracy * 100, 2), "%")
+    display_metrics$Sensitivity <- paste0(round(display_metrics$Sensitivity * 100, 2), "%")
+    display_metrics$Specificity <- paste0(round(display_metrics$Specificity * 100, 2), "%")
+    display_metrics$AUC <- round(display_metrics$AUC, 3)
+    
+    DT::datatable(display_metrics, 
+                  options = list(dom = 't', 
+                                 scrollX = TRUE,
+                                 pageLength = nrow(display_metrics)))
+  })
+  
+  # Confusion Matrix Visualization
+  output$confusion_matrix <- renderPlot({
+    req(values$test_data, input$cm_model)
+    
+    # Get the selected model and predictions
+    if(input$cm_model == "Logistic Regression" && !is.null(values$logistic_model)) {
+      pred_prob <- predict(values$logistic_model, values$test_data, type = "response")
+      pred_class <- ifelse(pred_prob > 0.5, 1, 0)
+      conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
+    } else if(input$cm_model == "KNN" && !is.null(values$knn_model)) {
+      knn_pred <- knn(train = values$knn_model$train_x, 
+                      test = values$test_data[, !names(values$test_data) %in% "CLASS_LABEL"], 
+                      cl = values$knn_model$train_y, 
+                      k = values$knn_model$k)
+      conf_matrix <- table(Predicted = knn_pred, Actual = values$test_data$CLASS_LABEL)
+    } else if(input$cm_model == "Naive Bayes" && !is.null(values$nb_model)) {
+      pred_class <- predict(values$nb_model, values$test_data)
+      conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
+    } else if(input$cm_model == "Decision Tree" && !is.null(values$dt_model)) {
+      pred_class <- predict(values$dt_model, values$test_data, type = "class")
+      conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
+    } else if(input$cm_model == "Random Forest" && !is.null(values$rf_model)) {
+      pred_class <- predict(values$rf_model, values$test_data)
+      conf_matrix <- table(Predicted = pred_class, Actual = values$test_data$CLASS_LABEL)
+    } else {
+      # No valid model selected
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Selected model not trained yet", cex = 1.5)
       return()
     }
     
-    withProgress(message = 'Creating Ensemble Model...', {
-      # Get predictions from all available models
-      predictions <- list()
-      
-      # Logistic Regression
-      if("logistic" %in% available_models) {
-        pred_prob <- predict(values$logistic_model, values$test_data, type = "response")
-        predictions$logistic <- ifelse(pred_prob > 0.5, 1, 0)
-      }
-      
-      # KNN
-      if("knn" %in% available_models) {
-        # Prepare data
-        train_x <- values$train_data[, !names(values$train_data) %in% "CLASS_LABEL"]
-        test_x <- values$test_data[, !names(values$test_data) %in% "CLASS_LABEL"]
-        train_y <- values$train_data$CLASS_LABEL
-        
-        knn_pred <- knn(train = train_x, test = test_x, cl = train_y, k = values$knn_model$k)
-        predictions$knn <- as.numeric(as.character(knn_pred))
-      }
-      
-      # Naive Bayes
-      if("nb" %in% available_models) {
-        pred_class <- predict(values$nb_model, values$test_data)
-        predictions$nb <- as.numeric(as.character(pred_class))
-      }
-      
-      # Decision Tree
-      if("dt" %in% available_models) {
-        pred_class <- predict(values$dt_model, values$test_data, type = "class")
-        predictions$dt <- as.numeric(as.character(pred_class))
-      }
-      
-      # Random Forest
-      if("rf" %in% available_models) {
-        pred_class <- predict(values$rf_model, values$test_data)
-        predictions$rf <- as.numeric(as.character(pred_class))
-      }
-      
-      # Combine predictions (majority vote)
-      pred_matrix <- do.call(cbind, predictions)
-      ensemble_pred <- apply(pred_matrix, 1, function(x) {
-        if(mean(x) > 0.5) 1 else 0
-      })
-      
-      # Evaluate ensemble
-      conf_matrix <- table(Predicted = ensemble_pred, Actual = values$test_data$CLASS_LABEL)
-      accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
-      
-      # Use caret for additional metrics
-      if (!require("caret")) install.packages("caret")
-      library(caret)
-      
-      # Convert to factors for caret metrics
-      pred_class_factor <- factor(ensemble_pred, levels = levels(values$test_data$CLASS_LABEL))
-      
-      # Calculate sensitivity and specificity
-      cm <- confusionMatrix(pred_class_factor, values$test_data$CLASS_LABEL)
-      sensitivity_val <- cm$byClass["Sensitivity"]
-      specificity_val <- cm$byClass["Specificity"]
-      
-      # Add to metrics table
-      new_metrics <- data.frame(
-        Model = "Ensemble (Majority Vote)",
-        Accuracy = accuracy,
-        Sensitivity = sensitivity_val,
-        Specificity = specificity_val,
-        AUC = NA,  # No direct probability estimates for standard ROC curve in simple majority vote
-        stringsAsFactors = FALSE
-      )
-      
-      # Update metrics table
-      values$metrics <- rbind(values$metrics[values$metrics$Model != "Ensemble (Majority Vote)", ], new_metrics)
-      
-      # Display result
-      output$ensemble_result <- renderPrint({
-        cat("Ensemble Model Results (Majority Vote):\n\n")
-        cat("Models included in ensemble:", paste(available_models, collapse = ", "), "\n\n")
-        cat("Confusion Matrix:\n")
-        print(conf_matrix)
-        cat("\nAccuracy:", round(accuracy, 4), "\n")
-        cat("Sensitivity:", round(sensitivity_val, 4), "\n")
-        cat("Specificity:", round(specificity_val, 4), "\n")
-      })
-    })
+    # Visualize confusion matrix
+    conf_matrix_df <- as.data.frame(as.table(conf_matrix))
+    colnames(conf_matrix_df) <- c("Predicted", "Actual", "Freq")
+    
+    # Calculate total for each actual class (for percentages)
+    totals <- aggregate(Freq ~ Actual, data = conf_matrix_df, sum)
+    conf_matrix_df <- merge(conf_matrix_df, totals, by = "Actual", suffixes = c("", "_total"))
+    conf_matrix_df$Percentage <- conf_matrix_df$Freq / conf_matrix_df$Freq_total * 100
+    
+    # Create the heatmap
+    ggplot(conf_matrix_df, aes(x = Predicted, y = Actual, fill = Freq)) +
+      geom_tile(color = "white") +
+      geom_text(aes(label = paste0(Freq, "\n(", round(Percentage, 1), "%)")), 
+                color = "black", size = 4) +
+      scale_fill_gradient(low = "white", high = "steelblue") +
+      labs(title = paste("Confusion Matrix -", input$cm_model),
+           x = "Predicted Class",
+           y = "Actual Class") +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
   })
 }
 
