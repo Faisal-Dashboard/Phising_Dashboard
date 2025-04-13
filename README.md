@@ -1,3 +1,5 @@
+Public Dashboard Link : https://faisaldashboard.shinyapps.io/project_sample/
+
 Machine Learning Model Comparison App
 A Shiny application for training and comparing different machine learning models for classification tasks.
 Features
